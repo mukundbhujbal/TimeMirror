@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">TimeAware - भान</string>
+    <string name="notification_channel_name">Screen Time Monitoring</string>
+    <string name="notification_channel_description">Displays ongoing cumulative screen time for selected apps</string>
+</resources>
