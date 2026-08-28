@@ -32,6 +32,9 @@ class AppPreferences(context: Context) {
     private val _isMonitoringActive = MutableStateFlow(isMonitoringActive())
     val isMonitoringActiveFlow: StateFlow<Boolean> = _isMonitoringActive.asStateFlow()
 
+    private val _userName = MutableStateFlow(getUserName())
+    val userNameFlow: StateFlow<String> = _userName.asStateFlow()
+
     fun getMonitoredPackages(): Set<String> {
         return prefs.getStringSet(KEY_MONITORED_PACKAGES, emptySet()) ?: emptySet()
     }
@@ -196,10 +199,13 @@ class AppPreferences(context: Context) {
     }
 
     fun setUserName(name: String?) {
-        if (name.isNullOrBlank()) {
+        val cleanName = name?.trim() ?: ""
+        if (cleanName.isEmpty()) {
             prefs.edit().remove(KEY_USER_NAME).apply()
+            _userName.value = ""
         } else {
-            prefs.edit().putString(KEY_USER_NAME, name).apply()
+            prefs.edit().putString(KEY_USER_NAME, cleanName).apply()
+            _userName.value = cleanName
         }
     }
 
