@@ -59,6 +59,7 @@ fun DashboardScreen(
     var hasNotificationPermission by remember { mutableStateOf(PermissionHelper.hasNotificationPermission(context)) }
     var showDurationDialog by remember { mutableStateOf(false) }
     var showUsageAccessDialog by remember { mutableStateOf(false) }
+    var showOverlayDialog by remember { mutableStateOf(false) }
 
     var remainingSeconds by remember { mutableStateOf(appPreferences.getRemainingHideDurationSeconds()) }
 
@@ -194,7 +195,7 @@ fun DashboardScreen(
                     if (!hasOverlayPermission) {
                         Button(
                             onClick = {
-                                PermissionHelper.openOverlaySettings(context)
+                                showOverlayDialog = true
                             },
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(
@@ -593,6 +594,56 @@ fun DashboardScreen(
             dismissButton = {
                 TextButton(
                     onClick = { showUsageAccessDialog = false }
+                ) {
+                    Text("Not Now")
+                }
+            }
+        )
+    }
+
+    // Prominent Disclosure Dialog for Overlay Permission
+    if (showOverlayDialog) {
+        AlertDialog(
+            onDismissRequest = { showOverlayDialog = false },
+            title = {
+                Text(
+                    text = "Display Over Other Apps Permission",
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.verticalScroll(rememberScrollState())
+                ) {
+                    Text(
+                        text = "TimeAware needs permission to display a small screen-time watermark over the apps you choose to monitor.\n\n" +
+                                "Why it is needed:\n" +
+                                "• The watermark shows your cumulative screen time while a monitored app is in use.\n\n" +
+                                "How it behaves:\n" +
+                                "• The watermark is non-interactive, so it does not block taps, scrolling, or typing in the app underneath.\n" +
+                                "• TimeAware uses this permission only to display the screen-time watermark.\n\n" +
+                                "Privacy:\n" +
+                                "• TimeAware does not record or capture your screen content.\n" +
+                                "• Your screen-time information is processed and stored on your device.\n" +
+                                "• TimeAware does not upload or share this information with a server.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showOverlayDialog = false
+                        PermissionHelper.openOverlaySettings(context)
+                    }
+                ) {
+                    Text("Continue to Settings")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showOverlayDialog = false }
                 ) {
                     Text("Not Now")
                 }
