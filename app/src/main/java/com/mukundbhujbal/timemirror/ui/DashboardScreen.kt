@@ -58,6 +58,7 @@ fun DashboardScreen(
     var hasUsagePermission by remember { mutableStateOf(PermissionHelper.hasUsageStatsPermission(context)) }
     var hasNotificationPermission by remember { mutableStateOf(PermissionHelper.hasNotificationPermission(context)) }
     var showDurationDialog by remember { mutableStateOf(false) }
+    var showUsageAccessDialog by remember { mutableStateOf(false) }
 
     var remainingSeconds by remember { mutableStateOf(appPreferences.getRemainingHideDurationSeconds()) }
 
@@ -207,7 +208,7 @@ fun DashboardScreen(
                     if (!hasUsagePermission) {
                         Button(
                             onClick = {
-                                PermissionHelper.openUsageAccessSettings(context)
+                                showUsageAccessDialog = true
                             },
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(
@@ -546,6 +547,54 @@ fun DashboardScreen(
             dismissButton = {
                 TextButton(onClick = { showDurationDialog = false }) {
                     Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Prominent Disclosure Dialog for Usage Access
+    if (showUsageAccessDialog) {
+        AlertDialog(
+            onDismissRequest = { showUsageAccessDialog = false },
+            title = {
+                Text(
+                    text = "Usage Access Required",
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.verticalScroll(rememberScrollState())
+                ) {
+                    Text(
+                        text = "TimeAware needs Usage Access to detect which app is currently active so it can calculate screen time for the apps you choose to monitor.\n\n" +
+                                "What TimeAware accesses:\n" +
+                                "• The package name of the currently active app and its usage activity.\n\n" +
+                                "Why it is needed:\n" +
+                                "• To calculate your screen time and show the TimeAware awareness watermark while a monitored app is in use.\n\n" +
+                                "Privacy:\n" +
+                                "• Your screen-time information is processed and stored on your device.\n" +
+                                "• TimeAware does not upload or share this information with a server.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showUsageAccessDialog = false
+                        PermissionHelper.openUsageAccessSettings(context)
+                    }
+                ) {
+                    Text("Continue to Settings")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showUsageAccessDialog = false }
+                ) {
+                    Text("Not Now")
                 }
             }
         )
