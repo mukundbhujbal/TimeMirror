@@ -260,7 +260,8 @@ private fun loadInstalledApps(context: Context, monitored: Set<String>): List<Ap
         }
     }
 
-    return appList.sortedBy { it.appName.lowercase() }
+    return appList.distinctBy { it.packageName }
+        .sortedBy { it.appName.lowercase() }
 }
 
 private fun drawableToBitmap(drawable: Drawable): Bitmap? {
