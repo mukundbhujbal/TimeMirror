@@ -27,6 +27,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.mukundbhujbal.timemirror.data.AppPreferences
 import com.mukundbhujbal.timemirror.engine.TimerEngine
 import com.mukundbhujbal.timemirror.service.TimerOverlayService
@@ -38,7 +41,32 @@ fun SettingsScreen(
     onBackClick: () -> Unit
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val isMonitoringActive by appPreferences.isMonitoringActiveFlow.collectAsState()
+
+    var isIgnoringBatteryOptimizations by remember {
+        mutableStateOf(PermissionHelper.isIgnoringBatteryOptimizations(context))
+    }
+    var isBackgroundRestricted by remember {
+        mutableStateOf(PermissionHelper.isBackgroundRestricted(context))
+    }
+    var isPowerSaveMode by remember {
+        mutableStateOf(PermissionHelper.isPowerSaveMode(context))
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                isIgnoringBatteryOptimizations = PermissionHelper.isIgnoringBatteryOptimizations(context)
+                isBackgroundRestricted = PermissionHelper.isBackgroundRestricted(context)
+                isPowerSaveMode = PermissionHelper.isPowerSaveMode(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -149,7 +177,164 @@ fun SettingsScreen(
                 }
             }
 
-            // Section 2: User Profile (User Name)
+            // Section 2: Background Reliability
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Background Reliability",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Text(
+                        text = "Help understand whether Android is currently applying battery or background restrictions that could affect TimeAware's monitoring service.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    HorizontalDivider()
+
+                    // Status 1: Battery Optimization
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "Battery Optimization",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (isIgnoringBatteryOptimizations) Color(0xFF4CAF50) else Color(0xFFE53935)
+                                    )
+                            )
+                            Text(
+                                text = if (isIgnoringBatteryOptimizations) {
+                                    "Battery optimization is not restricting TimeAware"
+                                } else {
+                                    "Battery optimization is active"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (isIgnoringBatteryOptimizations) Color(0xFF2E7D32) else Color(0xFFC62828)
+                            )
+                        }
+                    }
+
+                    // Status 2: Background Restriction
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "Background Restriction",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (isBackgroundRestricted) Color(0xFFE53935) else Color(0xFF4CAF50)
+                                    )
+                            )
+                            Text(
+                                text = if (isBackgroundRestricted) {
+                                    "Background activity is restricted"
+                                } else {
+                                    "Background activity is not restricted"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (isBackgroundRestricted) Color(0xFFC62828) else Color(0xFF2E7D32)
+                            )
+                        }
+                    }
+
+                    // Status 3: Battery Saver
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "Battery Saver",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF4CAF50))
+                            )
+                            Text(
+                                text = if (isPowerSaveMode) {
+                                    "Battery Saver is ON"
+                                } else {
+                                    "Battery Saver is OFF"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF2E7D32)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    // Buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                PermissionHelper.openBatteryOptimizationSettings(context)
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = "Open Battery Settings",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                PermissionHelper.openAppDetailsSettings(context)
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = "Open App Settings",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Section 3: User Profile (User Name)
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
