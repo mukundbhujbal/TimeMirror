@@ -5,12 +5,16 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.mukundbhujbal.timemirror.MainActivity
 import com.mukundbhujbal.timemirror.R
 import com.mukundbhujbal.timemirror.data.AppPreferences
@@ -41,6 +45,23 @@ class TimerOverlayService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Default + Job())
     private var orchestratorJob: Job? = null
+    private var isScreenReceiverRegistered = false
+
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_OFF -> {
+                    orchestratorJob?.cancel()
+                    orchestratorJob = null
+                }
+                Intent.ACTION_SCREEN_ON -> {
+                    if (orchestratorJob == null || orchestratorJob?.isActive == false) {
+                        startOrchestratorLoop()
+                    }
+                }
+            }
+        }
+    }
 
     private var lastSavedSeconds = 0L
     private var todayWithTimerSec = 0L
@@ -91,7 +112,11 @@ class TimerOverlayService : Service() {
 
         createNotificationChannel()
         startForegroundServiceNotification()
-        startOrchestratorLoop()
+        registerScreenReceiver()
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (powerManager.isInteractive) {
+            startOrchestratorLoop()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -104,13 +129,24 @@ class TimerOverlayService : Service() {
                 // Config updated, will be picked up on next tick
             }
         }
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        if (powerManager.isInteractive && (orchestratorJob == null || orchestratorJob?.isActive == false)) {
+            startOrchestratorLoop()
+        }
         return START_STICKY
     }
 
     private fun startOrchestratorLoop() {
         orchestratorJob?.cancel()
         orchestratorJob = serviceScope.launch {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
             while (isActive) {
+                if (!powerManager.isInteractive) {
+                    overlayController.hide()
+                    delay(1000)
+                    continue
+                }
+
                 val today = AppPreferences.getTodayDateString()
                 val isNewDay = TimerEngine.checkAndApplyMidnightRollover(today) ||
                         (currentTrackingDate.isNotEmpty() && currentTrackingDate != today)
@@ -261,7 +297,31 @@ class TimerOverlayService : Service() {
             .build()
     }
 
+    private fun registerScreenReceiver() {
+        if (!isScreenReceiverRegistered) {
+            val filter = IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_SCREEN_OFF)
+            }
+            ContextCompat.registerReceiver(this, screenReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+            isScreenReceiverRegistered = true
+        }
+    }
+
+    private fun unregisterScreenReceiver() {
+        if (isScreenReceiverRegistered) {
+            try {
+                unregisterReceiver(screenReceiver)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                isScreenReceiverRegistered = false
+            }
+        }
+    }
+
     override fun onDestroy() {
+        unregisterScreenReceiver()
         orchestratorJob?.cancel()
         overlayController.destroy()
         TimerEngine.pause()
