@@ -61,11 +61,47 @@ class HistoryRepository(context: Context) {
     }
 
     /**
+     * Backfills missing calendar days strictly between startDateExclusive and endDateExclusive with zero-usage records.
+     * Guarantees:
+     * 1. Only dates strictly between startDateExclusive and endDateExclusive are considered.
+     * 2. Dates strictly before installDate are never created.
+     * 3. Existing records in SQLite are never modified or overwritten (idempotent).
+     */
+    private fun backfillZeroDays(startDateExclusive: String, endDateExclusive: String) {
+        try {
+            val start = LocalDate.parse(startDateExclusive)
+            val end = LocalDate.parse(endDateExclusive)
+            val installDate = LocalDate.parse(getInstallDate())
+
+            var current = start.plusDays(1)
+            while (current.isBefore(end)) {
+                val dateStr = current.toString()
+                if (!current.isBefore(installDate)) {
+                    if (dbHelper.getRecord(dateStr) == null) {
+                        val zeroRecord = DailyHistoryRecord(
+                            date = dateStr,
+                            withOnScreenTimerSeconds = 0L,
+                            withoutOnScreenTimerSeconds = 0L,
+                            monitoringStoppedSeconds = 0L,
+                            topApps = emptyList()
+                        )
+                        dbHelper.insertOrUpdate(zeroRecord)
+                    }
+                }
+                current = current.plusDays(1)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /**
      * Finalizes a completed calendar day into the history database:
      * 1. Filters and sorts appUsageMap to determine Top 1 to 3 monitored apps.
      * 2. Inserts/updates the DailyHistoryRecord into SQLite.
-     * 3. Enforces 1-year rolling retention: removes records strictly older than 1 year.
-     * 4. Ensures no historical record is saved prior to the install date.
+     * 3. Backfills any intermediate missing calendar days with zero-usage records.
+     * 4. Enforces 1-year rolling retention: removes records strictly older than 1 year.
+     * 5. Ensures no historical record is saved prior to the install date.
      */
     fun finalizeDay(
         date: String,
@@ -73,7 +109,8 @@ class HistoryRepository(context: Context) {
         withoutTimerSeconds: Long,
         stoppedSeconds: Long,
         appUsageMap: Map<String, Long>,
-        monitoredPackages: Set<String>
+        monitoredPackages: Set<String>,
+        todayDate: String = AppPreferences.getTodayDateString()
     ): DailyHistoryRecord? {
         val installDate = getInstallDate()
         if (date < installDate) {
@@ -99,8 +136,11 @@ class HistoryRepository(context: Context) {
         // Save new daily record first
         saveDailyRecord(record)
 
+        // Backfill any intermediate zero-usage calendar days between date and todayDate
+        backfillZeroDays(startDateExclusive = date, endDateExclusive = todayDate)
+
         // Then enforce 1-year rolling retention
-        enforceRollingRetention(date)
+        enforceRollingRetention(todayDate)
 
         return record
     }

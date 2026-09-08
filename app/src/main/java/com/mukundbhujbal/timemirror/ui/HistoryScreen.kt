@@ -286,7 +286,7 @@ fun DayReportTab(
         }
 
         // Daily Report Container
-        if (dailyRecord != null && (dailyRecord.totalScreenTimeSeconds > 0L || dailyRecord.monitoringStoppedSeconds > 0L || selectedDate == today)) {
+        if (dailyRecord != null) {
             DailyReportDetails(record = dailyRecord)
         } else {
             InsufficientDataCard(message = "TimeAware was installed recently. There isn't enough data to generate this report yet.")
