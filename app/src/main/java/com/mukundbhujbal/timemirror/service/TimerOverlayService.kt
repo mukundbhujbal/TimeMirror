@@ -13,6 +13,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.mukundbhujbal.timemirror.MainActivity
@@ -22,6 +23,8 @@ import com.mukundbhujbal.timemirror.data.HistoryRepository
 import com.mukundbhujbal.timemirror.detector.ForegroundAppDetector
 import com.mukundbhujbal.timemirror.engine.TimerEngine
 import com.mukundbhujbal.timemirror.overlay.OverlayController
+import com.mukundbhujbal.timemirror.util.ForensicLogger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -47,14 +50,36 @@ class TimerOverlayService : Service() {
     private var orchestratorJob: Job? = null
     private var isScreenReceiverRegistered = false
 
+    // Forensic diagnostic tracking
+    private var lastForensicHeartbeatRealtime = 0L
+    private var lastForensicForegroundPackage: String? = null
+
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
+                    ForensicLogger.logEvent(
+                        eventName = "SCREEN_OFF",
+                        screenState = "OFF",
+                        serviceState = "RUN",
+                        orchestratorState = "CANCELLING"
+                    )
                     orchestratorJob?.cancel()
                     orchestratorJob = null
+                    ForensicLogger.logEvent(
+                        eventName = "ORCHESTRATOR_CANCELLED",
+                        screenState = "OFF",
+                        serviceState = "RUN",
+                        orchestratorState = "CANCELLED"
+                    )
                 }
                 Intent.ACTION_SCREEN_ON -> {
+                    ForensicLogger.logEvent(
+                        eventName = "SCREEN_ON",
+                        screenState = "ON",
+                        serviceState = "RUN",
+                        orchestratorState = if (orchestratorJob?.isActive == true) "ACTIVE" else "INACTIVE"
+                    )
                     if (orchestratorJob == null || orchestratorJob?.isActive == false) {
                         startOrchestratorLoop()
                     }
@@ -72,6 +97,14 @@ class TimerOverlayService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        ForensicLogger.initialize(this)
+        val initialPowerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        ForensicLogger.logEvent(
+            eventName = "SERVICE_CREATED",
+            screenState = if (initialPowerManager.isInteractive) "ON" else "OFF",
+            serviceState = "CREATED",
+            orchestratorState = "INACTIVE"
+        )
 
         appPreferences = AppPreferences.getInstance(this)
         foregroundDetector = ForegroundAppDetector(this)
@@ -120,6 +153,14 @@ class TimerOverlayService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        ForensicLogger.logEvent(
+            eventName = "SERVICE_START_COMMAND",
+            screenState = if (powerManager.isInteractive) "ON" else "OFF",
+            serviceState = "START_COMMAND",
+            orchestratorState = if (orchestratorJob?.isActive == true) "ACTIVE" else "INACTIVE",
+            errorInfo = if (intent == null) "intent=null" else "action=${intent.action}"
+        )
         when (intent?.action) {
             ACTION_STOP_SERVICE -> {
                 stopSelf()
@@ -129,7 +170,6 @@ class TimerOverlayService : Service() {
                 // Config updated, will be picked up on next tick
             }
         }
-        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         if (powerManager.isInteractive && (orchestratorJob == null || orchestratorJob?.isActive == false)) {
             startOrchestratorLoop()
         }
@@ -140,86 +180,148 @@ class TimerOverlayService : Service() {
         orchestratorJob?.cancel()
         orchestratorJob = serviceScope.launch {
             val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-            while (isActive) {
-                if (!powerManager.isInteractive) {
-                    overlayController.hide()
-                    delay(1000)
-                    continue
-                }
+            ForensicLogger.logEvent(
+                eventName = "ORCHESTRATOR_STARTED",
+                screenState = "ON",
+                serviceState = "RUN",
+                orchestratorState = "ACTIVE"
+            )
+            try {
+                while (isActive) {
+                    if (!powerManager.isInteractive) {
+                        overlayController.hide()
+                        delay(1000)
+                        continue
+                    }
 
-                val today = AppPreferences.getTodayDateString()
-                val isNewDay = TimerEngine.checkAndApplyMidnightRollover(today) ||
-                        (currentTrackingDate.isNotEmpty() && currentTrackingDate != today)
+                    val today = AppPreferences.getTodayDateString()
+                    val isNewDay = TimerEngine.checkAndApplyMidnightRollover(today) ||
+                            (currentTrackingDate.isNotEmpty() && currentTrackingDate != today)
 
-                if (isNewDay) {
-                    val previousDate = if (currentTrackingDate.isNotEmpty()) currentTrackingDate else appPreferences.getLastActiveDate()
-                    if (previousDate.isNotEmpty() && previousDate != today) {
-                        historyRepository.finalizeDay(
-                            date = previousDate,
-                            withTimerSeconds = todayWithTimerSec,
-                            withoutTimerSeconds = todayWithoutTimerSec,
-                            stoppedSeconds = todayStoppedSec,
-                            appUsageMap = todayAppUsageMap,
-                            monitoredPackages = appPreferences.getMonitoredPackages()
+                    if (isNewDay) {
+                        val previousDate = if (currentTrackingDate.isNotEmpty()) currentTrackingDate else appPreferences.getLastActiveDate()
+                        if (previousDate.isNotEmpty() && previousDate != today) {
+                            historyRepository.finalizeDay(
+                                date = previousDate,
+                                withTimerSeconds = todayWithTimerSec,
+                                withoutTimerSeconds = todayWithoutTimerSec,
+                                stoppedSeconds = todayStoppedSec,
+                                appUsageMap = todayAppUsageMap,
+                                monitoredPackages = appPreferences.getMonitoredPackages()
+                            )
+                        }
+                        todayWithTimerSec = 0L
+                        todayWithoutTimerSec = 0L
+                        todayStoppedSec = 0L
+                        todayAppUsageMap.clear()
+                        currentTrackingDate = today
+
+                        TimerEngine.resetToday(today)
+                        appPreferences.saveTodayHistoryCounters(0L, 0L, 0L, today)
+                        appPreferences.saveTodayAppUsageMap(emptyMap())
+                    }
+
+                    val monitoredPackages = appPreferences.getMonitoredPackages()
+                    val isMonitoredActive = foregroundDetector.isMonitoredAppActive(monitoredPackages)
+                    val showOnScreenTime = appPreferences.isShowOnScreenTimeEnabled()
+
+                    if (isMonitoredActive) {
+                        if (showOnScreenTime) {
+                            todayWithTimerSec++
+                            TimerEngine.updateCounters(todayWithTimerSec, todayWithoutTimerSec)
+                            TimerEngine.resume()
+                            overlayController.show()
+                            overlayController.updateTime(TimerEngine.getElapsedTodaySeconds())
+                        } else {
+                            todayWithoutTimerSec++
+                            TimerEngine.updateCounters(todayWithTimerSec, todayWithoutTimerSec)
+                            TimerEngine.resume()
+                            overlayController.hide()
+                        }
+
+                        val detectedPkg = foregroundDetector.detectForegroundPackage()
+                        if (detectedPkg != null && monitoredPackages.contains(detectedPkg)) {
+                            todayAppUsageMap[detectedPkg] = (todayAppUsageMap[detectedPkg] ?: 0L) + 1L
+                        }
+
+                        if (detectedPkg != lastForensicForegroundPackage) {
+                            lastForensicForegroundPackage = detectedPkg
+                            ForensicLogger.logEvent(
+                                eventName = "FOREGROUND_CHANGED",
+                                screenState = "ON",
+                                serviceState = "RUN",
+                                orchestratorState = "ACTIVE",
+                                foregroundPackage = detectedPkg,
+                                isMonitored = true,
+                                timerSeconds = TimerEngine.getElapsedTodaySeconds(),
+                                overlayVisible = showOnScreenTime
+                            )
+                        }
+                    } else {
+                        TimerEngine.pause()
+                        overlayController.hide()
+
+                        if (lastForensicForegroundPackage != null) {
+                            lastForensicForegroundPackage = null
+                            ForensicLogger.logEvent(
+                                eventName = "FOREGROUND_CHANGED",
+                                screenState = "ON",
+                                serviceState = "RUN",
+                                orchestratorState = "ACTIVE",
+                                foregroundPackage = "NON_MONITORED",
+                                isMonitored = false,
+                                timerSeconds = TimerEngine.getElapsedTodaySeconds(),
+                                overlayVisible = false
+                            )
+                        }
+                    }
+
+                    TimerEngine.tick()
+                    val elapsedSeconds = TimerEngine.getElapsedTodaySeconds()
+
+                    // Periodic 30-second forensic heartbeat
+                    val nowRealtime = SystemClock.elapsedRealtime()
+                    if (nowRealtime - lastForensicHeartbeatRealtime >= 30_000L) {
+                        lastForensicHeartbeatRealtime = nowRealtime
+                        ForensicLogger.logHeartbeat(
+                            screenState = "ON",
+                            serviceState = "RUN",
+                            orchestratorState = "ACTIVE",
+                            foregroundPackage = if (isMonitoredActive) lastForensicForegroundPackage else "NON_MONITORED",
+                            isMonitored = isMonitoredActive,
+                            timerSeconds = elapsedSeconds,
+                            overlayVisible = showOnScreenTime && isMonitoredActive
                         )
                     }
-                    todayWithTimerSec = 0L
-                    todayWithoutTimerSec = 0L
-                    todayStoppedSec = 0L
-                    todayAppUsageMap.clear()
-                    currentTrackingDate = today
 
-                    TimerEngine.resetToday(today)
-                    appPreferences.saveTodayHistoryCounters(0L, 0L, 0L, today)
-                    appPreferences.saveTodayAppUsageMap(emptyMap())
-                }
-
-                val monitoredPackages = appPreferences.getMonitoredPackages()
-                val isMonitoredActive = foregroundDetector.isMonitoredAppActive(monitoredPackages)
-                val showOnScreenTime = appPreferences.isShowOnScreenTimeEnabled()
-
-                if (isMonitoredActive) {
-                    if (showOnScreenTime) {
-                        todayWithTimerSec++
-                        TimerEngine.updateCounters(todayWithTimerSec, todayWithoutTimerSec)
-                        TimerEngine.resume()
-                        overlayController.show()
-                        overlayController.updateTime(TimerEngine.getElapsedTodaySeconds())
-                    } else {
-                        todayWithoutTimerSec++
-                        TimerEngine.updateCounters(todayWithTimerSec, todayWithoutTimerSec)
-                        TimerEngine.resume()
-                        overlayController.hide()
+                    // Save to SharedPreferences periodically (every 5 seconds)
+                    if (elapsedSeconds != lastSavedSeconds && elapsedSeconds % 5L == 0L) {
+                        lastSavedSeconds = elapsedSeconds
+                        appPreferences.saveTodayHistoryCounters(
+                            todayWithTimerSec,
+                            todayWithoutTimerSec,
+                            todayStoppedSec,
+                            today
+                        )
+                        appPreferences.saveTodayAppUsageMap(todayAppUsageMap)
                     }
 
-                    val detectedPkg = foregroundDetector.detectForegroundPackage()
-                    if (detectedPkg != null && monitoredPackages.contains(detectedPkg)) {
-                        todayAppUsageMap[detectedPkg] = (todayAppUsageMap[detectedPkg] ?: 0L) + 1L
-                    }
-                } else {
-                    TimerEngine.pause()
-                    overlayController.hide()
+                    // Update notification text
+                    updateNotification(elapsedSeconds, isMonitoredActive)
+
+                    delay(1000)
                 }
-
-                TimerEngine.tick()
-                val elapsedSeconds = TimerEngine.getElapsedTodaySeconds()
-
-                // Save to SharedPreferences periodically (every 5 seconds)
-                if (elapsedSeconds != lastSavedSeconds && elapsedSeconds % 5L == 0L) {
-                    lastSavedSeconds = elapsedSeconds
-                    appPreferences.saveTodayHistoryCounters(
-                        todayWithTimerSec,
-                        todayWithoutTimerSec,
-                        todayStoppedSec,
-                        today
-                    )
-                    appPreferences.saveTodayAppUsageMap(todayAppUsageMap)
-                }
-
-                // Update notification text
-                updateNotification(elapsedSeconds, isMonitoredActive)
-
-                delay(1000)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                ForensicLogger.logException(
+                    eventName = "ORCHESTRATOR_EXCEPTION",
+                    throwable = t,
+                    screenState = "ON",
+                    serviceState = "RUN",
+                    orchestratorState = "EXCEPTION"
+                )
+                throw t
             }
         }
     }
@@ -321,6 +423,14 @@ class TimerOverlayService : Service() {
     }
 
     override fun onDestroy() {
+        val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        ForensicLogger.logEvent(
+            eventName = "SERVICE_DESTROYED",
+            screenState = if (powerManager?.isInteractive == true) "ON" else "OFF",
+            serviceState = "DESTROYED",
+            orchestratorState = if (orchestratorJob?.isActive == true) "CANCELLING" else "CANCELLED",
+            timerSeconds = TimerEngine.getElapsedTodaySeconds()
+        )
         unregisterScreenReceiver()
         orchestratorJob?.cancel()
         overlayController.destroy()

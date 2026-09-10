@@ -25,6 +25,7 @@ import com.mukundbhujbal.timemirror.ui.HistoryScreen
 import com.mukundbhujbal.timemirror.ui.PermissionHelper
 import com.mukundbhujbal.timemirror.ui.SettingsScreen
 import com.mukundbhujbal.timemirror.ui.theme.TimeMirrorTheme
+import com.mukundbhujbal.timemirror.util.ForensicLogger
 
 class MainActivity : ComponentActivity() {
 
@@ -131,6 +132,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        ForensicLogger.initialize(this)
+        val monitoringActive = if (::appPreferences.isInitialized) appPreferences.isMonitoringActive() else null
+        ForensicLogger.logEvent(
+            eventName = "MAIN_ACTIVITY_RESUMED",
+            screenState = "ON",
+            serviceState = when (monitoringActive) {
+                true -> "MONITORING_ACTIVE"
+                false -> "MONITORING_INACTIVE"
+                null -> "UNKNOWN"
+            },
+            orchestratorState = "UNKNOWN"
+        )
         val today = AppPreferences.getTodayDateString()
         val savedDate = appPreferences.getLastActiveDate()
 

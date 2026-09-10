@@ -4,6 +4,7 @@ import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.os.SystemClock
+import com.mukundbhujbal.timemirror.util.ForensicLogger
 
 /**
  * Detects the currently active foreground application using UsageStatsManager.
@@ -67,7 +68,11 @@ class ForegroundAppDetector(private val context: Context) {
                 }
             }
         } catch (e: Exception) {
-            // Handle security or unexpected exceptions gracefully
+            ForensicLogger.logException(
+                eventName = "USAGESTATS_EXCEPTION",
+                throwable = e,
+                foregroundPackage = currentForegroundPackage
+            )
         }
 
         return currentForegroundPackage
