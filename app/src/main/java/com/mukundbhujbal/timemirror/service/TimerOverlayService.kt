@@ -24,6 +24,7 @@ import com.mukundbhujbal.timemirror.data.RecoverySnapshot
 import com.mukundbhujbal.timemirror.detector.ForegroundAppDetector
 import com.mukundbhujbal.timemirror.engine.TimerEngine
 import com.mukundbhujbal.timemirror.overlay.OverlayController
+import com.mukundbhujbal.timemirror.phoenix.PhoenixAlarmManager
 import com.mukundbhujbal.timemirror.phoenix.PhoenixHealthMonitor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -90,8 +91,25 @@ class TimerOverlayService : Service() {
                     overlayController.hide()
                     orchestratorJob?.cancel()
                     orchestratorJob = null
+
+                    // 5. Arm Phoenix exact alarm ONLY if monitoring is active
+                    if (isMonitoring) {
+                        val triggerAtMillis = screenOffTimestamp + PHOENIX_ALARM_DELAY_MILLIS
+                        val scheduled = PhoenixAlarmManager.schedule(this@TimerOverlayService, triggerAtMillis)
+                        if (scheduled) {
+                            Log.d(TAG, "Screen off: armed Phoenix exact alarm for 15m (triggerAt=$triggerAtMillis)")
+                        } else {
+                            Log.d(TAG, "Screen off: unable to arm Phoenix exact alarm (schedule returned false)")
+                        }
+                    } else {
+                        Log.d(TAG, "Screen off: monitoring is OFF -> Phoenix exact alarm not armed")
+                    }
                 }
                 Intent.ACTION_SCREEN_ON -> {
+                    // Cancel pending Phoenix alarm since live service is alive and resuming monitoring
+                    PhoenixAlarmManager.cancel(this@TimerOverlayService)
+                    Log.d(TAG, "Screen on: cancelled pending Phoenix alarm")
+
                     if (orchestratorJob == null || orchestratorJob?.isActive == false) {
                         startOrchestratorLoop()
                     }
@@ -159,6 +177,7 @@ class TimerOverlayService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP_SERVICE -> {
+                PhoenixAlarmManager.cancel(this)
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -361,6 +380,7 @@ class TimerOverlayService : Service() {
     }
 
     override fun onDestroy() {
+        PhoenixAlarmManager.cancel(this)
         PhoenixHealthMonitor.reset()
         unregisterScreenReceiver()
         orchestratorJob?.cancel()
@@ -383,6 +403,7 @@ class TimerOverlayService : Service() {
         private const val TAG = "TimerOverlayService"
         const val CHANNEL_ID = "timemirror_monitoring_channel"
         const val NOTIFICATION_ID = 1001
+        const val PHOENIX_ALARM_DELAY_MILLIS = 15 * 60 * 1000L // 15 minutes
 
         const val ACTION_START_SERVICE = "com.mukundbhujbal.timemirror.action.START"
         const val ACTION_STOP_SERVICE = "com.mukundbhujbal.timemirror.action.STOP"
@@ -400,6 +421,7 @@ class TimerOverlayService : Service() {
         }
 
         fun stopService(context: Context) {
+            PhoenixAlarmManager.cancel(context)
             val intent = Intent(context, TimerOverlayService::class.java).apply {
                 action = ACTION_STOP_SERVICE
             }
