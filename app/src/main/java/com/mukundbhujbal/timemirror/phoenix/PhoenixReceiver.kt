@@ -49,6 +49,13 @@ class PhoenixReceiver : BroadcastReceiver() {
             return
         }
 
+        // Additional Snapshot Sanity Check: Timestamp Validity
+        val now = System.currentTimeMillis()
+        if (snapshot.screenOffTimestamp <= 0L || snapshot.screenOffTimestamp > now) {
+            Log.d(TAG, "Phoenix check: snapshot timestamp invalid (screenOffTimestamp=${snapshot.screenOffTimestamp}, now=$now) -> NO-OP")
+            return
+        }
+
         // Step 5 — Dispatch Validated Phoenix Recovery Launch
         Log.d(TAG, "Phoenix recovery: initiating service launch (snapshot elapsed=${snapshot.timerElapsedSec}s)")
         try {
