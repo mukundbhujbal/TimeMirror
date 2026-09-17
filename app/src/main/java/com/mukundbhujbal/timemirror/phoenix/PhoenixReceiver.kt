@@ -6,15 +6,14 @@ import android.content.Intent
 import android.os.PowerManager
 import android.util.Log
 import com.mukundbhujbal.timemirror.data.AppPreferences
+import com.mukundbhujbal.timemirror.service.TimerOverlayService
 
 /**
  * State-aware BroadcastReceiver for Phoenix recovery alarms.
  *
  * Responds strictly to [PhoenixAlarmManager.ACTION_PHOENIX_ALARM].
- * Evaluates monitoring state, screen state, and service health.
- *
- * NOTE: Diagnostic evaluation only in this step.
- * Actual recovery execution is deferred to subsequent Phoenix steps.
+ * Evaluates monitoring state, screen state, service health, and snapshot validity
+ * before dispatching a recovery start of [TimerOverlayService].
  */
 class PhoenixReceiver : BroadcastReceiver() {
 
@@ -40,8 +39,23 @@ class PhoenixReceiver : BroadcastReceiver() {
         val isHealthy = PhoenixHealthMonitor.isHealthy(thresholdMillis = DEFAULT_HEALTH_THRESHOLD_MILLIS)
         if (isHealthy) {
             Log.d(TAG, "Phoenix check: monitoring ON + screen ON + service HEALTHY -> NO-OP")
-        } else {
-            Log.d(TAG, "Phoenix check: monitoring ON + screen ON + service UNHEALTHY -> RECOVERY NEEDED (simulated / no-op)")
+            return
+        }
+
+        // Step 4 — Check Recovery Snapshot Validity Gate
+        val snapshot = appPreferences.getRecoverySnapshot()
+        if (!snapshot.valid) {
+            Log.d(TAG, "Phoenix check: monitoring ON + screen ON + service UNHEALTHY + snapshot INVALID -> NO-OP")
+            return
+        }
+
+        // Step 5 — Dispatch Validated Phoenix Recovery Launch
+        Log.d(TAG, "Phoenix recovery: initiating service launch (snapshot elapsed=${snapshot.timerElapsedSec}s)")
+        try {
+            TimerOverlayService.startService(appContext)
+            Log.d(TAG, "Phoenix recovery: TimerOverlayService.startService() successfully dispatched")
+        } catch (e: Exception) {
+            Log.e(TAG, "Phoenix recovery: failed to launch TimerOverlayService", e)
         }
     }
 
