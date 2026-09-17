@@ -364,6 +364,48 @@ class AppPreferences(context: Context) {
         return Pair(totalElapsedSec, 0L)
     }
 
+    // --- Recovery Snapshot Foundation ---
+
+    fun saveRecoverySnapshot(snapshot: RecoverySnapshot) {
+        prefs.edit()
+            .putBoolean(KEY_SNAPSHOT_VALID, snapshot.valid)
+            .putBoolean(KEY_SNAPSHOT_MONITORING_ACTIVE, snapshot.monitoringActive)
+            .putBoolean(KEY_SNAPSHOT_HIDE_TIMER_ACTIVE, snapshot.hideTimerActive)
+            .putLong(KEY_SNAPSHOT_HIDE_TIMER_REMAINING_SEC, snapshot.hideTimerRemainingSec)
+            .putBoolean(KEY_SNAPSHOT_TIMER_RUNNING, snapshot.timerRunning)
+            .putLong(KEY_SNAPSHOT_TIMER_ELAPSED_SEC, snapshot.timerElapsedSec)
+            .putLong(KEY_SNAPSHOT_SCREEN_OFF_TIMESTAMP, snapshot.screenOffTimestamp)
+            .apply()
+    }
+
+    fun getRecoverySnapshot(): RecoverySnapshot {
+        val valid = prefs.getBoolean(KEY_SNAPSHOT_VALID, false)
+        if (!valid) {
+            return RecoverySnapshot.INVALID
+        }
+        return RecoverySnapshot(
+            monitoringActive = prefs.getBoolean(KEY_SNAPSHOT_MONITORING_ACTIVE, false),
+            hideTimerActive = prefs.getBoolean(KEY_SNAPSHOT_HIDE_TIMER_ACTIVE, false),
+            hideTimerRemainingSec = prefs.getLong(KEY_SNAPSHOT_HIDE_TIMER_REMAINING_SEC, 0L),
+            timerRunning = prefs.getBoolean(KEY_SNAPSHOT_TIMER_RUNNING, false),
+            timerElapsedSec = prefs.getLong(KEY_SNAPSHOT_TIMER_ELAPSED_SEC, 0L),
+            screenOffTimestamp = prefs.getLong(KEY_SNAPSHOT_SCREEN_OFF_TIMESTAMP, 0L),
+            valid = true
+        )
+    }
+
+    fun clearRecoverySnapshot() {
+        prefs.edit()
+            .putBoolean(KEY_SNAPSHOT_VALID, false)
+            .remove(KEY_SNAPSHOT_MONITORING_ACTIVE)
+            .remove(KEY_SNAPSHOT_HIDE_TIMER_ACTIVE)
+            .remove(KEY_SNAPSHOT_HIDE_TIMER_REMAINING_SEC)
+            .remove(KEY_SNAPSHOT_TIMER_RUNNING)
+            .remove(KEY_SNAPSHOT_TIMER_ELAPSED_SEC)
+            .remove(KEY_SNAPSHOT_SCREEN_OFF_TIMESTAMP)
+            .apply()
+    }
+
     companion object {
         private const val PREFS_NAME = "timemirror_prefs"
         private const val KEY_MONITORED_PACKAGES = "key_monitored_packages"
@@ -371,6 +413,15 @@ class AppPreferences(context: Context) {
         private const val KEY_HIDE_TIMER_UNTIL_TIMESTAMP = "key_hide_timer_until_timestamp"
         private const val KEY_LAST_ACTIVE_DATE = "key_last_active_date"
         private const val KEY_IS_MONITORING_ACTIVE = "key_is_monitoring_active"
+
+        // Recovery snapshot keys
+        private const val KEY_SNAPSHOT_VALID = "key_snapshot_valid"
+        private const val KEY_SNAPSHOT_MONITORING_ACTIVE = "key_snapshot_monitoring_active"
+        private const val KEY_SNAPSHOT_HIDE_TIMER_ACTIVE = "key_snapshot_hide_timer_active"
+        private const val KEY_SNAPSHOT_HIDE_TIMER_REMAINING_SEC = "key_snapshot_hide_timer_remaining_sec"
+        private const val KEY_SNAPSHOT_TIMER_RUNNING = "key_snapshot_timer_running"
+        private const val KEY_SNAPSHOT_TIMER_ELAPSED_SEC = "key_snapshot_timer_elapsed_sec"
+        private const val KEY_SNAPSHOT_SCREEN_OFF_TIMESTAMP = "key_snapshot_screen_off_timestamp"
 
         // History data layer keys
         private const val KEY_INSTALL_DATE = "key_install_date"
