@@ -22,6 +22,7 @@ import com.mukundbhujbal.timemirror.data.HistoryRepository
 import com.mukundbhujbal.timemirror.detector.ForegroundAppDetector
 import com.mukundbhujbal.timemirror.engine.TimerEngine
 import com.mukundbhujbal.timemirror.overlay.OverlayController
+import com.mukundbhujbal.timemirror.phoenix.PhoenixHealthMonitor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -219,6 +220,9 @@ class TimerOverlayService : Service() {
                 // Update notification text
                 updateNotification(elapsedSeconds, isMonitoredActive)
 
+                // Record active monitoring heartbeat
+                PhoenixHealthMonitor.recordHeartbeat()
+
                 delay(1000)
             }
         }
@@ -321,6 +325,7 @@ class TimerOverlayService : Service() {
     }
 
     override fun onDestroy() {
+        PhoenixHealthMonitor.reset()
         unregisterScreenReceiver()
         orchestratorJob?.cancel()
         overlayController.destroy()
