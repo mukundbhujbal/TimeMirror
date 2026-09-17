@@ -13,12 +13,14 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.mukundbhujbal.timemirror.MainActivity
 import com.mukundbhujbal.timemirror.R
 import com.mukundbhujbal.timemirror.data.AppPreferences
 import com.mukundbhujbal.timemirror.data.HistoryRepository
+import com.mukundbhujbal.timemirror.data.RecoverySnapshot
 import com.mukundbhujbal.timemirror.detector.ForegroundAppDetector
 import com.mukundbhujbal.timemirror.engine.TimerEngine
 import com.mukundbhujbal.timemirror.overlay.OverlayController
@@ -52,6 +54,40 @@ class TimerOverlayService : Service() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> {
+                    // 1. Capture current values while state is active
+                    val isMonitoring = appPreferences.isMonitoringActive()
+                    val isHideTimerActive = appPreferences.isTimerTemporarilyHidden()
+                    val hideTimerRemainingSec = appPreferences.getRemainingHideDurationSeconds()
+                    val isTimerRunning = TimerEngine.isRunning()
+                    val timerElapsedSec = TimerEngine.getElapsedTodaySeconds()
+                    val screenOffTimestamp = System.currentTimeMillis()
+
+                    // 2. Flush current in-memory tracking counters to AppPreferences
+                    val today = AppPreferences.getTodayDateString()
+                    appPreferences.saveTodayHistoryCounters(
+                        todayWithTimerSec,
+                        todayWithoutTimerSec,
+                        todayStoppedSec,
+                        today
+                    )
+                    appPreferences.saveTodayAppUsageMap(todayAppUsageMap)
+
+                    // 3. Save valid RecoverySnapshot
+                    val snapshot = RecoverySnapshot(
+                        monitoringActive = isMonitoring,
+                        hideTimerActive = isHideTimerActive,
+                        hideTimerRemainingSec = hideTimerRemainingSec,
+                        timerRunning = isTimerRunning,
+                        timerElapsedSec = timerElapsedSec,
+                        screenOffTimestamp = screenOffTimestamp,
+                        valid = true
+                    )
+                    appPreferences.saveRecoverySnapshot(snapshot)
+                    Log.d(TAG, "Screen off: captured recovery snapshot (valid=true, elapsed=${timerElapsedSec}s)")
+
+                    // 4. Enter existing P0 quiescence
+                    TimerEngine.pause()
+                    overlayController.hide()
                     orchestratorJob?.cancel()
                     orchestratorJob = null
                 }
@@ -344,6 +380,7 @@ class TimerOverlayService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
+        private const val TAG = "TimerOverlayService"
         const val CHANNEL_ID = "timemirror_monitoring_channel"
         const val NOTIFICATION_ID = 1001
 
