@@ -52,6 +52,14 @@
                 android:value="Screen time monitoring and watermark overlay" />
         </service>
 
+        <receiver
+            android:name=".phoenix.PhoenixReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.mukundbhujbal.timemirror.action.PHOENIX_ALARM" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
 </manifest>
