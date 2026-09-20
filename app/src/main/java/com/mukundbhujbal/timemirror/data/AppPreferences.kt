@@ -3,6 +3,7 @@ package com.mukundbhujbal.timemirror.data
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.SystemClock
+import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -112,6 +113,7 @@ class AppPreferences(context: Context) {
 
     fun setMonitoringActive(active: Boolean) {
         val previous = isMonitoringActive()
+        Log.d(TAG, "Monitoring active state changed: previous=$previous, new=$active")
         prefs.edit().putBoolean(KEY_IS_MONITORING_ACTIVE, active).apply()
         _isMonitoringActive.value = active
 
@@ -407,6 +409,7 @@ class AppPreferences(context: Context) {
     }
 
     companion object {
+        private const val TAG = "AppPreferences"
         private const val PREFS_NAME = "timemirror_prefs"
         private const val KEY_MONITORED_PACKAGES = "key_monitored_packages"
         private const val KEY_SHOW_ON_SCREEN_TIME = "key_show_on_screen_time"

@@ -2,6 +2,7 @@ package com.mukundbhujbal.timemirror
 
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -33,6 +34,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Log.d(TAG, "MainActivity launched with action: ${intent?.action}")
         enableEdgeToEdge()
 
         appPreferences = AppPreferences.getInstance(this)
@@ -164,5 +166,9 @@ class MainActivity : ComponentActivity() {
             appPreferences.saveTodayHistoryCounters(0L, 0L, 0L, today)
             appPreferences.saveTodayAppUsageMap(emptyMap())
         }
+    }
+
+    companion object {
+        private const val TAG = "MainActivity"
     }
 }
