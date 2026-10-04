@@ -28,46 +28,55 @@ class PhoenixReceiver : BroadcastReceiver() {
             return
         }
 
-        // Step 2 — Check Screen State (Quiescent Preservation)
-        val powerManager = appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
-        if (powerManager?.isInteractive == false) {
-            Log.d(TAG, "Phoenix check: monitoring ON + screen OFF -> QUIESCENT / NO-OP")
-            return
-        }
-
-        // Step 3 — Check Service Loop Health (Screen ON + Monitoring ON)
-        val isHealthy = PhoenixHealthMonitor.isHealthy(thresholdMillis = DEFAULT_HEALTH_THRESHOLD_MILLIS)
-        if (isHealthy) {
-            Log.d(TAG, "Phoenix check: monitoring ON + screen ON + service HEALTHY -> NO-OP")
-            return
-        }
-
-        // Step 4 — Check Recovery Snapshot Validity Gate
-        val snapshot = appPreferences.getRecoverySnapshot()
-        if (!snapshot.valid) {
-            Log.d(TAG, "Phoenix check: monitoring ON + screen ON + service UNHEALTHY + snapshot INVALID -> NO-OP")
-            return
-        }
-
-        // Additional Snapshot Sanity Check: Timestamp Validity
-        val now = System.currentTimeMillis()
-        if (snapshot.screenOffTimestamp <= 0L || snapshot.screenOffTimestamp > now) {
-            Log.d(TAG, "Phoenix check: snapshot timestamp invalid (screenOffTimestamp=${snapshot.screenOffTimestamp}, now=$now) -> NO-OP")
-            return
-        }
-
-        // Step 5 — Dispatch Validated Phoenix Recovery Launch
-        Log.d(TAG, "Phoenix recovery: initiating service launch (snapshot elapsed=${snapshot.timerElapsedSec}s)")
         try {
-            TimerOverlayService.startService(appContext)
-            Log.d(TAG, "Phoenix recovery: TimerOverlayService.startService() successfully dispatched")
-        } catch (e: Exception) {
-            Log.e(TAG, "Phoenix recovery: failed to launch TimerOverlayService", e)
+            // Step 2 — Check Screen State (Quiescent Preservation)
+            val powerManager = appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            if (powerManager?.isInteractive == false) {
+                Log.d(TAG, "Phoenix check: monitoring ON + screen OFF -> QUIESCENT / NO-OP")
+                return
+            }
+
+            // Step 3 — Check Service Loop Health (Screen ON + Monitoring ON)
+            val isHealthy = PhoenixHealthMonitor.isHealthy(thresholdMillis = DEFAULT_HEALTH_THRESHOLD_MILLIS)
+            if (isHealthy) {
+                Log.d(TAG, "Phoenix check: monitoring ON + screen ON + service HEALTHY -> NO-OP")
+                return
+            }
+
+            // Step 4 — Check Recovery Snapshot Validity Gate
+            val snapshot = appPreferences.getRecoverySnapshot()
+            if (!snapshot.valid) {
+                Log.d(TAG, "Phoenix check: monitoring ON + screen ON + service UNHEALTHY + snapshot INVALID -> NO-OP")
+                return
+            }
+
+            // Additional Snapshot Sanity Check: Timestamp Validity
+            val now = System.currentTimeMillis()
+            if (snapshot.screenOffTimestamp <= 0L || snapshot.screenOffTimestamp > now) {
+                Log.d(TAG, "Phoenix check: snapshot timestamp invalid (screenOffTimestamp=${snapshot.screenOffTimestamp}, now=$now) -> NO-OP")
+                return
+            }
+
+            // Step 5 — Dispatch Validated Phoenix Recovery Launch
+            Log.d(TAG, "Phoenix recovery: initiating service launch (snapshot elapsed=${snapshot.timerElapsedSec}s)")
+            try {
+                TimerOverlayService.startService(appContext)
+                Log.d(TAG, "Phoenix recovery: TimerOverlayService.startService() successfully dispatched")
+            } catch (e: Exception) {
+                Log.e(TAG, "Phoenix recovery: failed to launch TimerOverlayService", e)
+            }
+        } finally {
+            if (appPreferences.isMonitoringActive()) {
+                val triggerAtMillis =
+                    System.currentTimeMillis() + PHOENIX_ALARM_DELAY_MILLIS
+                PhoenixAlarmManager.schedule(appContext, triggerAtMillis)
+            }
         }
     }
 
     companion object {
         private const val TAG = "PhoenixReceiver"
         const val DEFAULT_HEALTH_THRESHOLD_MILLIS = 3000L
+        private const val PHOENIX_ALARM_DELAY_MILLIS = 15 * 60 * 1000L
     }
 }
