@@ -106,10 +106,6 @@ class TimerOverlayService : Service() {
                     }
                 }
                 Intent.ACTION_SCREEN_ON -> {
-                    // Cancel pending Phoenix alarm since live service is alive and resuming monitoring
-                    PhoenixAlarmManager.cancel(this@TimerOverlayService)
-                    Log.d(TAG, "Screen on: cancelled pending Phoenix alarm")
-
                     if (orchestratorJob == null || orchestratorJob?.isActive == false) {
                         startOrchestratorLoop()
                     }
