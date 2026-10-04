@@ -11,6 +11,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import com.mukundbhujbal.timemirror.phoenix.PhoenixAlarmManager
 
 class AppPreferences(context: Context) {
 
@@ -126,6 +127,16 @@ class AppPreferences(context: Context) {
                 accumulateMonitoringStoppedTime()
                 setMonitoringStoppedAnchor(0L, 0L)
             }
+        }
+
+        // Phoenix Safety Net invariant:
+        // MONITORING ON  -> Phoenix alarm MUST be armed.
+        // MONITORING OFF -> Phoenix alarm MUST be cancelled.
+        if (active) {
+            val triggerAtMillis = System.currentTimeMillis() + PHOENIX_ALARM_DELAY_MILLIS
+            PhoenixAlarmManager.schedule(appContext, triggerAtMillis)
+        } else {
+            PhoenixAlarmManager.cancel(appContext)
         }
     }
 
@@ -416,6 +427,7 @@ class AppPreferences(context: Context) {
         private const val KEY_HIDE_TIMER_UNTIL_TIMESTAMP = "key_hide_timer_until_timestamp"
         private const val KEY_LAST_ACTIVE_DATE = "key_last_active_date"
         private const val KEY_IS_MONITORING_ACTIVE = "key_is_monitoring_active"
+        private const val PHOENIX_ALARM_DELAY_MILLIS = 15 * 60 * 1000L // 15 minutes
 
         // Recovery snapshot keys
         private const val KEY_SNAPSHOT_VALID = "key_snapshot_valid"
