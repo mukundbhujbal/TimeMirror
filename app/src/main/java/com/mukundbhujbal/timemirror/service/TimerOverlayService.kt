@@ -376,7 +376,9 @@ class TimerOverlayService : Service() {
     }
 
     override fun onDestroy() {
-        PhoenixAlarmManager.cancel(this)
+        if (::appPreferences.isInitialized && !appPreferences.isMonitoringActive()) {
+            PhoenixAlarmManager.cancel(this)
+        }
         PhoenixHealthMonitor.reset()
         unregisterScreenReceiver()
         orchestratorJob?.cancel()
