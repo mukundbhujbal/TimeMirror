@@ -13,6 +13,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -22,6 +23,7 @@ import com.mukundbhujbal.timemirror.data.AppPreferences
 import com.mukundbhujbal.timemirror.data.HistoryRepository
 import com.mukundbhujbal.timemirror.data.RecoverySnapshot
 import com.mukundbhujbal.timemirror.detector.ForegroundAppDetector
+import com.mukundbhujbal.timemirror.engine.ElapsedCredit
 import com.mukundbhujbal.timemirror.engine.TimerEngine
 import com.mukundbhujbal.timemirror.overlay.OverlayController
 import com.mukundbhujbal.timemirror.phoenix.PhoenixAlarmManager
@@ -115,6 +117,7 @@ class TimerOverlayService : Service() {
     }
 
     private var lastSavedSeconds = 0L
+    private var lastSavedRealtimeMs = 0L
     private var todayWithTimerSec = 0L
     private var todayWithoutTimerSec = 0L
     private var todayStoppedSec = 0L
@@ -192,8 +195,24 @@ class TimerOverlayService : Service() {
         orchestratorJob?.cancel()
         orchestratorJob = serviceScope.launch {
             val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+
+            // C1: the authoritative counter advances by measured monotonic elapsed
+            // time, not by a fixed "+1" per iteration. Both the timestamp and the
+            // fractional remainder are (re)initialised here, at every loop start and
+            // restart, so a restart can never credit the gap since the previous job
+            // stopped (e.g. a screen-off session or a sticky service restart).
+            var lastIterationRealtimeMs = SystemClock.elapsedRealtime()
+            val elapsedCredit = ElapsedCredit()
+
             while (isActive) {
+                val nowRealtimeMs = SystemClock.elapsedRealtime()
+                val deltaMs = nowRealtimeMs - lastIterationRealtimeMs
+                lastIterationRealtimeMs = nowRealtimeMs
+
                 if (!powerManager.isInteractive) {
+                    // Screen off: this interval must not count, and no carried
+                    // remainder may survive into the next tracked stretch.
+                    elapsedCredit.reset()
                     overlayController.hide()
                     delay(1000)
                     continue
@@ -221,6 +240,9 @@ class TimerOverlayService : Service() {
                     todayAppUsageMap.clear()
                     currentTrackingDate = today
 
+                    // C1: never carry a sub-second remainder across the day boundary.
+                    elapsedCredit.reset()
+
                     TimerEngine.resetToday(today)
                     appPreferences.saveTodayHistoryCounters(0L, 0L, 0L, today)
                     appPreferences.saveTodayAppUsageMap(emptyMap())
@@ -230,23 +252,36 @@ class TimerOverlayService : Service() {
                 val isMonitoredActive = foregroundDetector.isMonitoredAppActive(monitoredPackages)
                 val showOnScreenTime = appPreferences.isShowOnScreenTimeEnabled()
 
+                // C1: credit the *measured* interval, carrying the sub-second
+                // remainder forward. When no monitored app is in the foreground the
+                // interval is discarded (and the remainder reset) instead of credited.
+                val creditedSeconds = elapsedCredit.onInterval(deltaMs, credit = isMonitoredActive)
+
                 if (isMonitoredActive) {
+                    if (creditedSeconds > 0L) {
+                        if (showOnScreenTime) {
+                            todayWithTimerSec += creditedSeconds
+                        } else {
+                            todayWithoutTimerSec += creditedSeconds
+                        }
+                    }
+                    TimerEngine.updateCounters(todayWithTimerSec, todayWithoutTimerSec)
+                    TimerEngine.resume()
                     if (showOnScreenTime) {
-                        todayWithTimerSec++
-                        TimerEngine.updateCounters(todayWithTimerSec, todayWithoutTimerSec)
-                        TimerEngine.resume()
                         overlayController.show()
                         overlayController.updateTime(TimerEngine.getElapsedTodaySeconds())
                     } else {
-                        todayWithoutTimerSec++
-                        TimerEngine.updateCounters(todayWithTimerSec, todayWithoutTimerSec)
-                        TimerEngine.resume()
                         overlayController.hide()
                     }
 
-                    val detectedPkg = foregroundDetector.detectForegroundPackage()
-                    if (detectedPkg != null && monitoredPackages.contains(detectedPkg)) {
-                        todayAppUsageMap[detectedPkg] = (todayAppUsageMap[detectedPkg] ?: 0L) + 1L
+                    if (creditedSeconds > 0L) {
+                        val detectedPkg = foregroundDetector.detectForegroundPackage()
+                        if (detectedPkg != null && monitoredPackages.contains(detectedPkg)) {
+                            // Same credited seconds, so the per-app totals and the
+                            // daily total stay on one scale.
+                            todayAppUsageMap[detectedPkg] =
+                                (todayAppUsageMap[detectedPkg] ?: 0L) + creditedSeconds
+                        }
                     }
                 } else {
                     TimerEngine.pause()
@@ -256,8 +291,14 @@ class TimerOverlayService : Service() {
                 TimerEngine.tick()
                 val elapsedSeconds = TimerEngine.getElapsedTodaySeconds()
 
-                // Save to SharedPreferences periodically (every 5 seconds)
-                if (elapsedSeconds != lastSavedSeconds && elapsedSeconds % 5L == 0L) {
+                // C1: persist on a real-time cadence. The previous trigger
+                // ("elapsedSeconds % 5 == 0") can now be stepped over because the
+                // counter may advance by more than one second per iteration, which
+                // could skip save cycles and delay persistence.
+                if (elapsedSeconds != lastSavedSeconds &&
+                    nowRealtimeMs - lastSavedRealtimeMs >= SAVE_INTERVAL_MILLIS
+                ) {
+                    lastSavedRealtimeMs = nowRealtimeMs
                     lastSavedSeconds = elapsedSeconds
                     appPreferences.saveTodayHistoryCounters(
                         todayWithTimerSec,
@@ -402,6 +443,9 @@ class TimerOverlayService : Service() {
         const val CHANNEL_ID = "timemirror_monitoring_channel"
         const val NOTIFICATION_ID = 1001
         const val PHOENIX_ALARM_DELAY_MILLIS = 15 * 60 * 1000L // 15 minutes
+
+        /** Persist today's counters every ~5s of real time (C1: was "every 5 credited seconds"). */
+        private const val SAVE_INTERVAL_MILLIS = 5000L
 
         const val ACTION_START_SERVICE = "com.mukundbhujbal.timemirror.action.START"
         const val ACTION_STOP_SERVICE = "com.mukundbhujbal.timemirror.action.STOP"
