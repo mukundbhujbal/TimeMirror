@@ -1,5 +1,8 @@
 package com.mukundbhujbal.timemirror.ui
 
+import android.content.pm.PackageManager
+import android.os.Build
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -43,6 +46,25 @@ fun SettingsScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val isMonitoringActive by appPreferences.isMonitoringActiveFlow.collectAsState()
+
+    val (versionName, versionCode) = remember(context) {
+        try {
+            val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(
+                    context.packageName,
+                    PackageManager.PackageInfoFlags.of(0)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0)
+            }
+            val vName = packageInfo.versionName ?: "Unknown"
+            val vCode = packageInfo.longVersionCode
+            Pair(vName, vCode)
+        } catch (e: Exception) {
+            Pair("Unknown", null)
+        }
+    }
 
     var isIgnoringBatteryOptimizations by remember {
         mutableStateOf(PermissionHelper.isIgnoringBatteryOptimizations(context))
@@ -488,7 +510,11 @@ fun SettingsScreen(
                     HorizontalDivider()
 
                     InfoRow(label = "Application", value = "TimeAware – भान")
-                    InfoRow(label = "Version", value = "1.0")
+                    InfoRow(label = "Version", value = versionName)
+                    if (versionCode != null) {
+                        InfoRow(label = "Build", value = "$versionCode")
+                    }
+                    InfoRow(label = "Update Status", value = "Unable to check for updates")
                     InfoRow(label = "Developer", value = "Mukund Bhujbal")
                     InfoRow(label = "Developer Email", value = "To be added")
                     InfoRow(label = "Developer Phone", value = "To be added")
