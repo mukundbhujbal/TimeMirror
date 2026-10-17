@@ -19,6 +19,14 @@ class AppPreferences(context: Context) {
     private val prefs: SharedPreferences =
         appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+    /**
+     * H1-F1: guards every read-modify-write of the stopped-time key
+     * (KEY_TODAY_STOPPED_SEC) together with the KEY_LAST_ACTIVE_DATE state that
+     * decides how it is attributed. Held only across in-memory SharedPreferences
+     * operations -- never during database work.
+     */
+    private val stoppedTimeLock = Any()
+
     private val _monitoredPackages = MutableStateFlow(getMonitoredPackages())
     val monitoredPackagesFlow: StateFlow<Set<String>> = _monitoredPackages.asStateFlow()
 
@@ -165,7 +173,7 @@ class AppPreferences(context: Context) {
     }
 
     fun resetCumulativeTime(todayDate: String = getTodayDateString()) {
-        saveTodayHistoryCounters(0L, 0L, 0L, todayDate)
+        saveTodayHistoryCounters(0L, 0L, todayDate)
         saveTodayAppUsageMap(emptyMap())
         setMonitoringStoppedAnchor(0L, 0L)
         resumeTimerNow()
@@ -234,18 +242,56 @@ class AppPreferences(context: Context) {
         return prefs.getLong(KEY_TODAY_STOPPED_SEC, 0L)
     }
 
+    /**
+     * H1-F1: ordinary screen-time persistence. It deliberately takes no stopped-time
+     * argument and never writes KEY_TODAY_STOPPED_SEC, so no caller can overwrite the
+     * authoritative stopped-time value with a stale copy.
+     */
     fun saveTodayHistoryCounters(
         withTimerSec: Long,
         withoutTimerSec: Long,
-        stoppedSec: Long,
         date: String
     ) {
         prefs.edit()
             .putLong(KEY_TODAY_WITH_TIMER_SEC, withTimerSec)
             .putLong(KEY_TODAY_WITHOUT_TIMER_SEC, withoutTimerSec)
-            .putLong(KEY_TODAY_STOPPED_SEC, stoppedSec)
             .putString(KEY_LAST_ACTIVE_DATE, date)
             .apply()
+    }
+
+    /**
+     * H1-F1 day-rollover persistence (M1).
+     *
+     * Advances the tracking date, resets the ordinary counters and consumes
+     * [recordedStoppedSeconds] from the stopped-time key in ONE atomic
+     * SharedPreferences edit, so the (KEY_LAST_ACTIVE_DATE, KEY_TODAY_STOPPED_SEC) pair
+     * can never be observed half-updated after a crash.
+     *
+     * Stopped time accumulated between the capture of [recordedStoppedSeconds] and this
+     * call is retained (max(current - recorded, 0)); the key never goes negative.
+     *
+     * Guarantee boundary: this fixes the stale-value overwrite and the single-rollover
+     * read/accumulate/consume lost update. It does NOT provide exactly-once history
+     * finalization: two concurrent rollover paths can both capture the same value, so a
+     * second call can subtract it again and finalizeDay() still blindly
+     * CONFLICT_REPLACEs the row. Cross-midnight attribution is unchanged.
+     */
+    fun advanceDayAndConsumeStoppedTime(
+        withTimerSec: Long,
+        withoutTimerSec: Long,
+        date: String,
+        recordedStoppedSeconds: Long
+    ) {
+        synchronized(stoppedTimeLock) {
+            val currentStopped = getTodayMonitoringStoppedSeconds()
+            val remaining = (currentStopped - recordedStoppedSeconds).coerceAtLeast(0L)
+            prefs.edit()
+                .putLong(KEY_TODAY_WITH_TIMER_SEC, withTimerSec)
+                .putLong(KEY_TODAY_WITHOUT_TIMER_SEC, withoutTimerSec)
+                .putLong(KEY_TODAY_STOPPED_SEC, remaining)
+                .putString(KEY_LAST_ACTIVE_DATE, date)
+                .apply()
+        }
     }
 
     fun getTodayAppUsageMap(): Map<String, Long> {
@@ -303,7 +349,6 @@ class AppPreferences(context: Context) {
 
         val nowRealtime = SystemClock.elapsedRealtime()
         val nowWallClock = System.currentTimeMillis()
-        val lastActiveDate = getLastActiveDate().ifEmpty { todayDate }
 
         // Compute actual running elapsed seconds (excluding device power-off downtime)
         val elapsedSec: Long = if (startRealtime > 0L && nowRealtime >= startRealtime) {
@@ -321,21 +366,30 @@ class AppPreferences(context: Context) {
         }
 
         if (elapsedSec > 0L) {
-            if (lastActiveDate == todayDate) {
-                // Same calendar day
-                val currentStopped = getTodayMonitoringStoppedSeconds()
-                prefs.edit()
-                    .putLong(KEY_TODAY_STOPPED_SEC, currentStopped + elapsedSec)
-                    .putString(KEY_LAST_ACTIVE_DATE, todayDate)
-                    .apply()
-            } else {
-                // Cross-midnight scenario while monitoring was OFF
-                val (prevDayDelta, _) = calculateMidnightStoppedSplit(startWallClock, nowWallClock, elapsedSec)
-                val currentStopped = getTodayMonitoringStoppedSeconds()
-                prefs.edit()
-                    .putLong(KEY_TODAY_STOPPED_SEC, currentStopped + prevDayDelta)
-                    .putString(KEY_LAST_ACTIVE_DATE, lastActiveDate)
-                    .apply()
+            // H1-F1: the branch-selection date read, the branch decision and the
+            // resulting (stopped-time, date) edit are one critical section, serialized
+            // against advanceDayAndConsumeStoppedTime(), so a day rollover cannot
+            // interleave and leave this accumulation writing stale date state.
+            // The elapsed-time arithmetic, the branch conditions, the split calculation,
+            // the values written and the anchor semantics above/below are unchanged.
+            synchronized(stoppedTimeLock) {
+                val lastActiveDate = getLastActiveDate().ifEmpty { todayDate }
+                if (lastActiveDate == todayDate) {
+                    // Same calendar day
+                    val currentStopped = getTodayMonitoringStoppedSeconds()
+                    prefs.edit()
+                        .putLong(KEY_TODAY_STOPPED_SEC, currentStopped + elapsedSec)
+                        .putString(KEY_LAST_ACTIVE_DATE, todayDate)
+                        .apply()
+                } else {
+                    // Cross-midnight scenario while monitoring was OFF
+                    val (prevDayDelta, _) = calculateMidnightStoppedSplit(startWallClock, nowWallClock, elapsedSec)
+                    val currentStopped = getTodayMonitoringStoppedSeconds()
+                    prefs.edit()
+                        .putLong(KEY_TODAY_STOPPED_SEC, currentStopped + prevDayDelta)
+                        .putString(KEY_LAST_ACTIVE_DATE, lastActiveDate)
+                        .apply()
+                }
             }
         }
 

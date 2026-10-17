@@ -67,10 +67,10 @@ class TimerOverlayService : Service() {
 
                     // 2. Flush current in-memory tracking counters to AppPreferences
                     val today = AppPreferences.getTodayDateString()
+                    // H1-F1: ordinary flush -- never writes the stopped-time key.
                     appPreferences.saveTodayHistoryCounters(
                         todayWithTimerSec,
                         todayWithoutTimerSec,
-                        todayStoppedSec,
                         today
                     )
                     appPreferences.saveTodayAppUsageMap(todayAppUsageMap)
@@ -120,7 +120,6 @@ class TimerOverlayService : Service() {
     private var lastSavedRealtimeMs = 0L
     private var todayWithTimerSec = 0L
     private var todayWithoutTimerSec = 0L
-    private var todayStoppedSec = 0L
     private val todayAppUsageMap = mutableMapOf<String, Long>()
     private var currentTrackingDate = ""
 
@@ -138,27 +137,28 @@ class TimerOverlayService : Service() {
 
         todayWithTimerSec = appPreferences.getTodayWithTimerSeconds()
         todayWithoutTimerSec = appPreferences.getTodayWithoutTimerSeconds()
-        todayStoppedSec = appPreferences.getTodayMonitoringStoppedSeconds()
         todayAppUsageMap.clear()
         todayAppUsageMap.putAll(appPreferences.getTodayAppUsageMap())
 
         if (savedDate.isNotEmpty() && savedDate != today) {
-            // New day on service startup: finalize previous day's record
+            // New day on service startup: finalize previous day's record.
+            // H1-F1: capture the authoritative stopped-time value once and use that exact
+            // value for finalization and for the atomic counter/date rollover below.
+            val recordedStoppedSec = appPreferences.getTodayMonitoringStoppedSeconds()
             historyRepository.finalizeDay(
                 date = savedDate,
                 withTimerSeconds = todayWithTimerSec,
                 withoutTimerSeconds = todayWithoutTimerSec,
-                stoppedSeconds = todayStoppedSec,
+                stoppedSeconds = recordedStoppedSec,
                 appUsageMap = todayAppUsageMap,
                 monitoredPackages = appPreferences.getMonitoredPackages()
             )
             todayWithTimerSec = 0L
             todayWithoutTimerSec = 0L
-            todayStoppedSec = 0L
             todayAppUsageMap.clear()
 
             TimerEngine.initialize(0L, 0L, today)
-            appPreferences.saveTodayHistoryCounters(0L, 0L, 0L, today)
+            appPreferences.advanceDayAndConsumeStoppedTime(0L, 0L, today, recordedStoppedSec)
             appPreferences.saveTodayAppUsageMap(emptyMap())
         } else {
             TimerEngine.initialize(todayWithTimerSec, todayWithoutTimerSec, today)
@@ -224,19 +224,22 @@ class TimerOverlayService : Service() {
 
                 if (isNewDay) {
                     val previousDate = if (currentTrackingDate.isNotEmpty()) currentTrackingDate else appPreferences.getLastActiveDate()
+                    // H1-F1: capture the authoritative stopped-time value once, use that
+                    // exact value for finalization, and consume it atomically with the
+                    // counter/date rollover below. Database work stays outside the lock.
+                    val recordedStoppedSec = appPreferences.getTodayMonitoringStoppedSeconds()
                     if (previousDate.isNotEmpty() && previousDate != today) {
                         historyRepository.finalizeDay(
                             date = previousDate,
                             withTimerSeconds = todayWithTimerSec,
                             withoutTimerSeconds = todayWithoutTimerSec,
-                            stoppedSeconds = todayStoppedSec,
+                            stoppedSeconds = recordedStoppedSec,
                             appUsageMap = todayAppUsageMap,
                             monitoredPackages = appPreferences.getMonitoredPackages()
                         )
                     }
                     todayWithTimerSec = 0L
                     todayWithoutTimerSec = 0L
-                    todayStoppedSec = 0L
                     todayAppUsageMap.clear()
                     currentTrackingDate = today
 
@@ -244,7 +247,7 @@ class TimerOverlayService : Service() {
                     elapsedCredit.reset()
 
                     TimerEngine.resetToday(today)
-                    appPreferences.saveTodayHistoryCounters(0L, 0L, 0L, today)
+                    appPreferences.advanceDayAndConsumeStoppedTime(0L, 0L, today, recordedStoppedSec)
                     appPreferences.saveTodayAppUsageMap(emptyMap())
                 }
 
@@ -300,10 +303,10 @@ class TimerOverlayService : Service() {
                 ) {
                     lastSavedRealtimeMs = nowRealtimeMs
                     lastSavedSeconds = elapsedSeconds
+                    // H1-F1: ordinary flush -- never writes the stopped-time key.
                     appPreferences.saveTodayHistoryCounters(
                         todayWithTimerSec,
                         todayWithoutTimerSec,
-                        todayStoppedSec,
                         today
                     )
                     appPreferences.saveTodayAppUsageMap(todayAppUsageMap)
@@ -426,10 +429,10 @@ class TimerOverlayService : Service() {
         overlayController.destroy()
         TimerEngine.pause()
         val today = AppPreferences.getTodayDateString()
+        // H1-F1: ordinary flush -- never writes the stopped-time key.
         appPreferences.saveTodayHistoryCounters(
             todayWithTimerSec,
             todayWithoutTimerSec,
-            todayStoppedSec,
             today
         )
         appPreferences.saveTodayAppUsageMap(todayAppUsageMap)

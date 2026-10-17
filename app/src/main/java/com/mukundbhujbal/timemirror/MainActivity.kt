@@ -49,17 +49,20 @@ class MainActivity : ComponentActivity() {
         val today = AppPreferences.getTodayDateString()
 
         if (savedDate.isNotEmpty() && savedDate != today) {
-            // Day rollover occurred while app was inactive: finalize previous day
+            // Day rollover occurred while app was inactive: finalize previous day.
+            // H1-F1: capture the authoritative stopped-time value once and use that exact
+            // value for finalization and for the atomic counter/date rollover below.
+            val recordedStoppedSec = appPreferences.getTodayMonitoringStoppedSeconds()
             historyRepository.finalizeDay(
                 date = savedDate,
                 withTimerSeconds = withTimerSec,
                 withoutTimerSeconds = withoutTimerSec,
-                stoppedSeconds = appPreferences.getTodayMonitoringStoppedSeconds(),
+                stoppedSeconds = recordedStoppedSec,
                 appUsageMap = appPreferences.getTodayAppUsageMap(),
                 monitoredPackages = appPreferences.getMonitoredPackages()
             )
             TimerEngine.initialize(0L, 0L, today)
-            appPreferences.saveTodayHistoryCounters(0L, 0L, 0L, today)
+            appPreferences.advanceDayAndConsumeStoppedTime(0L, 0L, today, recordedStoppedSec)
             appPreferences.saveTodayAppUsageMap(emptyMap())
         } else {
             TimerEngine.initialize(withTimerSec, withoutTimerSec, today)
@@ -153,17 +156,29 @@ class MainActivity : ComponentActivity() {
 
         // Refresh timer if date rolled over while app was paused
         if (TimerEngine.checkAndApplyMidnightRollover(today)) {
-            if (savedDate.isNotEmpty() && savedDate != today && ::historyRepository.isInitialized) {
+            // H1-F1: capture the authoritative stopped-time value once and use that exact
+            // value for finalization and for the atomic counter/date rollover below.
+            val recordedStoppedSec = appPreferences.getTodayMonitoringStoppedSeconds()
+            // F2: stopped time may only be consumed once it has actually been recorded.
+            // One Boolean drives both the finalization branch and the consumed amount, so
+            // the two decisions cannot diverge.
+            val canFinalizePreviousDay =
+                savedDate.isNotEmpty() && savedDate != today && ::historyRepository.isInitialized
+            if (canFinalizePreviousDay) {
                 historyRepository.finalizeDay(
                     date = savedDate,
                     withTimerSeconds = appPreferences.getTodayWithTimerSeconds(),
                     withoutTimerSeconds = appPreferences.getTodayWithoutTimerSeconds(),
-                    stoppedSeconds = appPreferences.getTodayMonitoringStoppedSeconds(),
+                    stoppedSeconds = recordedStoppedSec,
                     appUsageMap = appPreferences.getTodayAppUsageMap(),
                     monitoredPackages = appPreferences.getMonitoredPackages()
                 )
             }
-            appPreferences.saveTodayHistoryCounters(0L, 0L, 0L, today)
+            // F2: when nothing was finalized, consume 0L so the stopped-time key is left
+            // unchanged (remaining = max(current - 0, 0) = current) while the ordinary
+            // with/without counters and the tracking date are still reset atomically.
+            val stoppedToConsume = if (canFinalizePreviousDay) recordedStoppedSec else 0L
+            appPreferences.advanceDayAndConsumeStoppedTime(0L, 0L, today, stoppedToConsume)
             appPreferences.saveTodayAppUsageMap(emptyMap())
         }
     }
