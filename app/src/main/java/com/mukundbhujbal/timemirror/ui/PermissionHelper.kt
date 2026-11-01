@@ -11,6 +11,7 @@ import android.os.PowerManager
 import android.os.Process
 import android.provider.Settings
 import androidx.core.content.ContextCompat
+import com.mukundbhujbal.timemirror.phoenix.PhoenixAlarmManager
 
 object PermissionHelper {
 
@@ -57,6 +58,35 @@ object PermissionHelper {
         return hasOverlayPermission(context) &&
                 hasUsageStatsPermission(context) &&
                 hasNotificationPermission(context)
+    }
+
+    /**
+     * Exact-alarm special app access (API 31+). Delegates to the watchdog helper so the UI and
+     * the scheduler share one source of truth. Always true below API 31.
+     * Note: this is a special app access, not a runtime permission.
+     */
+    fun hasExactAlarmAccess(context: Context): Boolean {
+        return PhoenixAlarmManager.canSchedule(context)
+    }
+
+    /**
+     * Opens the system screen where the user can grant "Alarms & reminders" access.
+     * Only applicable on API 31+; never grants anything automatically. If the OEM does not
+     * resolve the intent, falls back to the app details screen.
+     */
+    fun openExactAlarmSettings(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        try {
+            val intent = Intent(
+                Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                Uri.parse("package:${context.packageName}")
+            )
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            openAppDetailsSettings(context)
+        }
     }
 
     fun openOverlaySettings(context: Context) {

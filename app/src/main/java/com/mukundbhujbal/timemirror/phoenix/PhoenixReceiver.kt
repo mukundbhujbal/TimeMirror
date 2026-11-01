@@ -69,7 +69,10 @@ class PhoenixReceiver : BroadcastReceiver() {
             if (appPreferences.isMonitoringActive()) {
                 val triggerAtMillis =
                     System.currentTimeMillis() + PHOENIX_ALARM_DELAY_MILLIS
-                PhoenixAlarmManager.schedule(appContext, triggerAtMillis)
+                val result = PhoenixAlarmManager.schedule(appContext, triggerAtMillis)
+                if (result == PhoenixAlarmManager.ScheduleResult.FAILED) {
+                    Log.e(TAG, "Watchdog re-arm failed (exact and inexact unavailable); recovery chain stopped")
+                }
             }
         }
     }

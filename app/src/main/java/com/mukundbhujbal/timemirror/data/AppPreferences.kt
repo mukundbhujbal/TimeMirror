@@ -7,10 +7,10 @@ import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 import com.mukundbhujbal.timemirror.phoenix.PhoenixAlarmManager
 
 class AppPreferences(context: Context) {
@@ -142,7 +142,10 @@ class AppPreferences(context: Context) {
         // MONITORING OFF -> Phoenix alarm MUST be cancelled.
         if (active) {
             val triggerAtMillis = System.currentTimeMillis() + PHOENIX_ALARM_DELAY_MILLIS
-            PhoenixAlarmManager.schedule(appContext, triggerAtMillis)
+            val result = PhoenixAlarmManager.schedule(appContext, triggerAtMillis)
+            if (result == PhoenixAlarmManager.ScheduleResult.FAILED) {
+                Log.w(TAG, "Monitoring ON but the recovery watchdog could not be armed (exact and inexact failed)")
+            }
         } else {
             PhoenixAlarmManager.cancel(appContext)
         }
@@ -186,7 +189,10 @@ class AppPreferences(context: Context) {
         if (installDate == null) {
             installDate = try {
                 val pkgInfo = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
-                SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(pkgInfo.firstInstallTime))
+                Instant.ofEpochMilli(pkgInfo.firstInstallTime)
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDate()
+                    .toString()
             } catch (e: Exception) {
                 getTodayDateString()
             }
@@ -504,7 +510,10 @@ class AppPreferences(context: Context) {
         private const val KEY_MONITORING_STOPPED_REALTIME = "key_monitoring_stopped_realtime"
 
         fun getTodayDateString(): String {
-            return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+            // C2: canonical ISO-8601 date key (proleptic Gregorian, ASCII digits) that
+            // matches the LocalDate consumers. Locale-dependent formatting must never be
+            // used here: the locale can change the calendar system and the digit set.
+            return LocalDate.now().toString()
         }
 
         @Volatile

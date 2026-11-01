@@ -15,14 +15,16 @@ android {
         applicationId = "com.mukundbhujbal.timemirror"
         minSdk = 29
         targetSdk = 36
-        versionCode = 3
-        versionName = "Phoenix 5.1.1"
+        versionCode = 5
+        versionName = "Phoenix 7.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
         release {
+            // Signed with the existing debug keystore: installable personal-use build.
+            signingConfig = signingConfigs.getByName("debug")
             optimization {
                 enable = false
             }

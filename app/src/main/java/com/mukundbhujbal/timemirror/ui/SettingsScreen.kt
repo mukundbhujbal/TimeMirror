@@ -75,6 +75,9 @@ fun SettingsScreen(
     var isPowerSaveMode by remember {
         mutableStateOf(PermissionHelper.isPowerSaveMode(context))
     }
+    var hasExactAlarmAccess by remember {
+        mutableStateOf(PermissionHelper.hasExactAlarmAccess(context))
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -82,6 +85,7 @@ fun SettingsScreen(
                 isIgnoringBatteryOptimizations = PermissionHelper.isIgnoringBatteryOptimizations(context)
                 isBackgroundRestricted = PermissionHelper.isBackgroundRestricted(context)
                 isPowerSaveMode = PermissionHelper.isPowerSaveMode(context)
+                hasExactAlarmAccess = PermissionHelper.hasExactAlarmAccess(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -314,6 +318,61 @@ fun SettingsScreen(
                                 },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color(0xFF2E7D32)
+                            )
+                        }
+                    }
+
+                    // Status 4: Exact-alarm special access (watchdog recovery)
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "Alarm & Reminder Access",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (hasExactAlarmAccess) Color(0xFF4CAF50) else Color(0xFFE53935)
+                                    )
+                            )
+                            Text(
+                                text = if (hasExactAlarmAccess) {
+                                    "Exact alarms allowed"
+                                } else {
+                                    "Exact alarms not allowed"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (hasExactAlarmAccess) Color(0xFF2E7D32) else Color(0xFFC62828)
+                            )
+                        }
+                        if (!hasExactAlarmAccess) {
+                            Text(
+                                text = "Recovery checks may run late because Android can defer inexact alarms. Monitoring itself keeps working.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    if (!hasExactAlarmAccess) {
+                        OutlinedButton(
+                            onClick = {
+                                PermissionHelper.openExactAlarmSettings(context)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = "Open Alarm & Reminder Access",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
                     }

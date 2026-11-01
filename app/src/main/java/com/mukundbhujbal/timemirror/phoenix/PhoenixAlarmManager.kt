@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.util.Log
 
 /**
  * Phoenix Exact Alarm infrastructure component.
@@ -21,6 +22,14 @@ object PhoenixAlarmManager {
 
     const val ACTION_PHOENIX_ALARM = "com.mukundbhujbal.timemirror.action.PHOENIX_ALARM"
     private const val PHOENIX_ALARM_REQUEST_CODE = 2001
+    private const val TAG = "PhoenixAlarmManager"
+
+    /**
+     * Outcome of a watchdog scheduling attempt. EXACT/INEXACT only mean the corresponding
+     * AlarmManager call returned successfully; neither guarantees receiver delivery nor that
+     * the foreground service will actually start.
+     */
+    enum class ScheduleResult { EXACT, INEXACT, FAILED }
 
     /**
      * Verifies whether the application has permission to schedule exact alarms.
@@ -41,30 +50,54 @@ object PhoenixAlarmManager {
     }
 
     /**
-     * Schedules a single one-shot exact alarm that fires even while the device is in idle / Doze mode.
+     * Schedules a single one-shot watchdog alarm.
+     *
+     * Uses an exact alarm when the exact-alarm special access is available; otherwise (or if
+     * the exact attempt fails safely) it falls back to an inexact alarm with the SAME
+     * PendingIntent identity, so no second watchdog is created. Android may defer inexact
+     * alarms, so this is a reliability improvement, not a timing guarantee.
      *
      * @param context Application context.
      * @param triggerAtMillis The time in milliseconds that the alarm should go off.
      * @param type The alarm type, defaults to [AlarmManager.RTC_WAKEUP].
-     * @return True if the alarm was successfully scheduled, false otherwise.
+     * @return [ScheduleResult.EXACT], [ScheduleResult.INEXACT] or [ScheduleResult.FAILED].
      */
     fun schedule(
         context: Context,
         triggerAtMillis: Long,
         type: Int = AlarmManager.RTC_WAKEUP
-    ): Boolean {
-        if (!canSchedule(context)) {
-            return false
+    ): ScheduleResult {
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+        if (alarmManager == null) {
+            Log.e(TAG, "Watchdog scheduling FAILED: AlarmManager unavailable")
+            return ScheduleResult.FAILED
         }
+        val pendingIntent = createPendingIntent(context)
+
+        // 1) Exact path, unchanged when the special access is available.
+        if (canSchedule(context)) {
+            try {
+                alarmManager.setExactAndAllowWhileIdle(type, triggerAtMillis, pendingIntent)
+                Log.d(TAG, "Watchdog armed (EXACT) for $triggerAtMillis")
+                return ScheduleResult.EXACT
+            } catch (e: SecurityException) {
+                Log.w(TAG, "Exact-alarm access lost during scheduling; falling back to inexact", e)
+            } catch (e: Exception) {
+                Log.w(TAG, "Exact watchdog scheduling failed; falling back to inexact", e)
+            }
+        } else {
+            Log.i(TAG, "Exact-alarm access unavailable; using inexact watchdog")
+        }
+
+        // 2) Inexact fallback with the same PendingIntent identity: it replaces any pending
+        //    watchdog instead of adding a duplicate. Delivery may be deferred by the system.
         return try {
-            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return false
-            val pendingIntent = createPendingIntent(context)
-            alarmManager.setExactAndAllowWhileIdle(type, triggerAtMillis, pendingIntent)
-            true
-        } catch (e: SecurityException) {
-            false
+            alarmManager.setAndAllowWhileIdle(type, triggerAtMillis, pendingIntent)
+            Log.d(TAG, "Watchdog armed (INEXACT, delivery not guaranteed) for $triggerAtMillis")
+            ScheduleResult.INEXACT
         } catch (e: Exception) {
-            false
+            Log.e(TAG, "Watchdog scheduling FAILED (exact unavailable and inexact failed)", e)
+            ScheduleResult.FAILED
         }
     }
 
@@ -77,7 +110,8 @@ object PhoenixAlarmManager {
             val pendingIntent = createPendingIntent(context)
             alarmManager.cancel(pendingIntent)
         } catch (e: Exception) {
-            // Safe: swallow exception to prevent crash
+            // Safe: swallow the exception to prevent a crash, but keep it observable.
+            Log.w(TAG, "Watchdog cancellation failed", e)
         }
     }
 

@@ -42,6 +42,7 @@ fun DashboardScreen(
     onSelectAppsClick: () -> Unit,
     onHistoryClick: () -> Unit,
     onSettingsClick: () -> Unit,
+    onGatewayClick: () -> Unit,
     onRequestNotificationPermission: () -> Unit
 ) {
     val context = LocalContext.current
@@ -293,6 +294,26 @@ fun DashboardScreen(
                     )
                 }
             }
+        }
+
+        // Gateway entry: quick launcher for monitored apps with a bounded tracker check
+        Button(
+            onClick = onGatewayClick,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.PlayArrow,
+                contentDescription = null
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "Open an App",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold
+            )
         }
 
         // Conditional "Start Monitoring Service" Button (shown ONLY when monitoring is stopped)

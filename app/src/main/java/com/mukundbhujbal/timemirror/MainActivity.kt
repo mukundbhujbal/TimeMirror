@@ -1,5 +1,6 @@
 package com.mukundbhujbal.timemirror
 
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -22,15 +23,29 @@ import com.mukundbhujbal.timemirror.engine.TimerEngine
 import com.mukundbhujbal.timemirror.service.TimerOverlayService
 import com.mukundbhujbal.timemirror.ui.AppSelectionScreen
 import com.mukundbhujbal.timemirror.ui.DashboardScreen
+import com.mukundbhujbal.timemirror.ui.GatewayScreen
 import com.mukundbhujbal.timemirror.ui.HistoryScreen
 import com.mukundbhujbal.timemirror.ui.PermissionHelper
 import com.mukundbhujbal.timemirror.ui.SettingsScreen
 import com.mukundbhujbal.timemirror.ui.theme.TimeMirrorTheme
+import com.mukundbhujbal.timemirror.widget.WidgetRenderer
+import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var appPreferences: AppPreferences
     private lateinit var historyRepository: HistoryRepository
+
+    /** One-shot widget request: delivered by MainActivity, consumed once by the Gateway screen. */
+    private val pendingGatewayRequest = MutableStateFlow<GatewayRequest?>(null)
+
+    /** Id of the last widget request the Gateway consumed (survives configuration changes). */
+    private var handledRequestId = 0L
+
+    /** Restored handled id; prevents replaying a consumed request after process recreation. */
+    private var restoredHandledRequestId = 0L
+
+    private data class GatewayRequest(val packageName: String, val requestId: Long)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -73,9 +88,23 @@ class MainActivity : ComponentActivity() {
             TimerOverlayService.startService(this)
         }
 
+        // Widget tap that started this instance (cold start).
+        restoredHandledRequestId = savedInstanceState?.getLong(EXTRA_GATEWAY_REQUEST_ID, 0L) ?: 0L
+        handleGatewayIntent(intent)
+        // The restore guard applies to this creation only; later widget taps (onNewIntent) are new.
+        restoredHandledRequestId = 0L
+
         setContent {
             TimeMirrorTheme {
                 var currentScreen by rememberSaveable { mutableStateOf("dashboard") }
+                val gatewayRequest by pendingGatewayRequest.collectAsState()
+
+                // A widget icon always opens the Gateway; the Gateway consumes the request once.
+                LaunchedEffect(gatewayRequest) {
+                    if (gatewayRequest != null) {
+                        currentScreen = "gateway"
+                    }
+                }
 
                 BackHandler(enabled = currentScreen != "dashboard") {
                     currentScreen = "dashboard"
@@ -93,6 +122,19 @@ class MainActivity : ComponentActivity() {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     Box(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
                         when (currentScreen) {
+                            "gateway" -> {
+                                GatewayScreen(
+                                    appPreferences = appPreferences,
+                                    onBackClick = { currentScreen = "dashboard" },
+                                    gatewayTarget = gatewayRequest?.packageName,
+                                    gatewayRequestId = gatewayRequest?.requestId ?: 0L,
+                                    onGatewayRequestHandled = {
+                                        handledRequestId =
+                                            gatewayRequest?.requestId ?: handledRequestId
+                                        pendingGatewayRequest.value = null
+                                    }
+                                )
+                            }
                             "select_apps" -> {
                                 AppSelectionScreen(
                                     appPreferences = appPreferences,
@@ -118,6 +160,7 @@ class MainActivity : ComponentActivity() {
                                     onSelectAppsClick = { currentScreen = "select_apps" },
                                     onHistoryClick = { currentScreen = "history" },
                                     onSettingsClick = { currentScreen = "settings" },
+                                    onGatewayClick = { currentScreen = "gateway" },
                                     onRequestNotificationPermission = {
                                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                             notificationPermissionLauncher.launch(
@@ -132,6 +175,45 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleGatewayIntent(intent)
+    }
+
+    /**
+     * Converts a widget-launched intent into a one-shot Gateway request.
+     *
+     * The request id is stored in the intent itself when first assigned, so a configuration
+     * change re-delivers the same id and the Gateway does not launch the target twice. A new
+     * widget tap arrives through onNewIntent without an id and receives a fresh one.
+     */
+    private fun handleGatewayIntent(intent: Intent?) {
+        val target = intent?.getStringExtra(EXTRA_GATEWAY_TARGET) ?: return
+        val existingRequestId = intent.getLongExtra(EXTRA_GATEWAY_REQUEST_ID, 0L)
+        if (existingRequestId > 0L) {
+            // Same request re-delivered after a configuration change. If it was already
+            // consumed, do not replay it.
+            if (existingRequestId == restoredHandledRequestId) return
+            pendingGatewayRequest.value = GatewayRequest(target, existingRequestId)
+            return
+        }
+        if (restoredHandledRequestId > 0L) {
+            // The activity was restored after this widget request was already consumed; do not
+            // replay the launch. Keep the id so a further configuration change stays idempotent.
+            intent.putExtra(EXTRA_GATEWAY_REQUEST_ID, restoredHandledRequestId)
+            return
+        }
+        val newId = (System.nanoTime() and Long.MAX_VALUE).coerceAtLeast(1L)
+        intent.putExtra(EXTRA_GATEWAY_REQUEST_ID, newId)
+        pendingGatewayRequest.value = GatewayRequest(target, newId)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putLong(EXTRA_GATEWAY_REQUEST_ID, handledRequestId)
     }
 
     override fun onResume() {
@@ -181,9 +263,22 @@ class MainActivity : ComponentActivity() {
             appPreferences.advanceDayAndConsumeStoppedTime(0L, 0L, today, stoppedToConsume)
             appPreferences.saveTodayAppUsageMap(emptyMap())
         }
+
+        // Lightweight foreground-event refresh: keeps both widgets current after date or selection
+        // changes that happened while the app was away. No-op when no widget instance exists.
+        WidgetRenderer.refreshAll(this)
     }
 
     companion object {
         private const val TAG = "MainActivity"
+
+        /** Intent action used by widget PendingIntents to request a Gateway launch. */
+        const val ACTION_OPEN_VIA_GATEWAY = "com.mukundbhujbal.timemirror.action.OPEN_VIA_GATEWAY"
+
+        /** Exact target package of the widget icon that was tapped. */
+        const val EXTRA_GATEWAY_TARGET = "com.mukundbhujbal.timemirror.extra.GATEWAY_TARGET"
+
+        /** One-shot id so a pending request survives recreation without launching twice. */
+        const val EXTRA_GATEWAY_REQUEST_ID = "com.mukundbhujbal.timemirror.extra.GATEWAY_REQUEST_ID"
     }
 }

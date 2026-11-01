@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import com.mukundbhujbal.timemirror.data.AppInfo
 import com.mukundbhujbal.timemirror.data.AppPreferences
 import com.mukundbhujbal.timemirror.service.TimerOverlayService
+import com.mukundbhujbal.timemirror.widget.WidgetRenderer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -119,6 +120,7 @@ fun AppSelectionScreen(
                             val allPkgs = installedApps.map { it.packageName }.toSet()
                             appPreferences.setMonitoredPackages(allPkgs)
                             TimerOverlayService.notifyConfigChanged(context)
+                            WidgetRenderer.refreshAll(context)
                         }
                     ) {
                         Text("Select All")
@@ -127,6 +129,7 @@ fun AppSelectionScreen(
                         onClick = {
                             appPreferences.setMonitoredPackages(emptySet())
                             TimerOverlayService.notifyConfigChanged(context)
+                            WidgetRenderer.refreshAll(context)
                         }
                     ) {
                         Text("Clear")
@@ -170,6 +173,7 @@ fun AppSelectionScreen(
                             onToggle = { checked ->
                                 appPreferences.toggleAppMonitored(app.packageName, checked)
                                 TimerOverlayService.notifyConfigChanged(context)
+                                WidgetRenderer.refreshAll(context)
                             }
                         )
                     }
